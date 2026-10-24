@@ -14,7 +14,10 @@ const LINK_GROUPS = [
   },
   {
     title: "支援",
-    links: [{ href: "/#faq", label: "常見問題" }],
+    links: [
+      { href: "/settings", label: "API 金鑰設定" },
+      { href: "/#faq", label: "常見問題" },
+    ],
   },
 ];
 
@@ -63,7 +66,7 @@ export function SiteFooter() {
           <span>
             © <CopyrightYear /> {PRODUCT_NAME}. All rights reserved.
           </span>
-          <span>AI 能力由 Claude 提供</span>
+          <span>支援 Anthropic 與 OpenAI · 使用你自己的 API 金鑰</span>
         </div>
       </div>
     </footer>

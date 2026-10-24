@@ -2,16 +2,20 @@ import Link from "next/link";
 import { PRODUCT_NAME } from "@/components/logo";
 import { ScoreBar } from "@/components/score-bar";
 import { QUESTION_COUNT_OPTIONS } from "@/lib/interview";
-
-// 題數選項的顯示文字，例如「3 或 5」
-const COUNT_TEXT = QUESTION_COUNT_OPTIONS.join(" 或 ");
 import { container, eyebrow, primaryButton, secondaryButton } from "@/lib/styles";
 
 // ───────────────────────── 頁面內容資料 ─────────────────────────
 // 文案與畫面分開存放，修改文字時不必動到排版。
 
-/** 使用流程的三個步驟 */
+// 題數選項的顯示文字，例如「3 或 5」
+const COUNT_TEXT = QUESTION_COUNT_OPTIONS.join(" 或 ");
+
+/** 使用流程的四個步驟 */
 const STEPS = [
+  {
+    title: "設定 API 金鑰",
+    body: "在設定頁填入你自己的 Anthropic 或 OpenAI API 金鑰。金鑰只存在你的瀏覽器，我們不會儲存。",
+  },
   {
     title: "貼上職缺描述",
     body: "把想應徵的職缺內容貼進來，面試官會從職責與技能要求中找出要考你的重點。",
@@ -49,13 +53,13 @@ const FEATURES = [
     icon: "M5 12l4 4 10-10",
   },
   {
-    title: "免註冊，開啟即用",
-    body: "不需要建立帳號，貼上職缺描述就能馬上開始練習。",
-    icon: "M12 4v16M4 12h16",
+    title: "自備金鑰，費用透明",
+    body: "支援 Anthropic 與 OpenAI。使用你自己的 API 金鑰，費用直接由你的帳號依用量計算，免註冊。",
+    icon: "M14 7a4 4 0 1 1-3.5 5.9L4 19.5V16h3v-3h2.5",
   },
   {
-    title: "不保存面試紀錄",
-    body: "對話只存在你的瀏覽器分頁中，我們的伺服器不會儲存你的面試內容。",
+    title: "不儲存金鑰與紀錄",
+    body: "API 金鑰只存在你的瀏覽器；面試對話只存在當下的分頁。我們的伺服器兩者都不儲存。",
     icon: "M7 11V8a5 5 0 0 1 10 0v3M6 11h12v9H6z",
   },
 ];
@@ -64,7 +68,11 @@ const FEATURES = [
 const FAQS = [
   {
     q: "需要付費或註冊嗎？",
-    a: "不需要註冊帳號，打開「開始面試」頁面就能直接使用。",
+    a: "不需要註冊帳號。Lagom 採用 BYOK（自備金鑰）模式：在「設定」頁填入你自己的 Anthropic 或 OpenAI API 金鑰即可使用，AI 的費用由你的帳號依用量計算。",
+  },
+  {
+    q: "我的 API 金鑰安全嗎？會被儲存嗎？",
+    a: "金鑰只儲存在你這個瀏覽器的 localStorage。每次出題時，金鑰會透過 HTTPS 隨請求傳到我們的伺服器，只用來轉呼叫你選擇的 AI 服務，請求結束就丟棄，不會被儲存或寫入紀錄。建議在供應商後台為金鑰設定用量上限；在共用電腦上使用後，請到設定頁按「清除金鑰」。",
   },
   {
     q: "一場面試有幾題？",
@@ -76,7 +84,7 @@ const FAQS = [
   },
   {
     q: "我的回答會被保存嗎？",
-    a: "本服務的伺服器不儲存面試紀錄。對話只存在你目前的瀏覽器分頁中，重新整理或按「重新開始」就會清除。回答內容會傳送給 AI 模型產生題目與評分。",
+    a: "本服務的伺服器不儲存面試紀錄。對話只存在你目前的瀏覽器分頁中，重新整理或按「重新開始」就會清除。回答內容會傳送給你選擇的 AI 供應商（Anthropic 或 OpenAI）來產生題目與評分。",
   },
   {
     q: "可以用英文職缺練習嗎？",
@@ -134,7 +142,7 @@ function Hero() {
               了解流程
             </Link>
           </div>
-          <p className="text-xs text-muted">免註冊 · 可選 {COUNT_TEXT} 題</p>
+          <p className="text-xs text-muted">免註冊 · 自備 Anthropic 或 OpenAI 金鑰 · 可選 {COUNT_TEXT} 題</p>
         </div>
         <ResultPreview />
       </div>
@@ -226,13 +234,13 @@ function SectionHeading({ label, title, body }: { label: string; title: string; 
   );
 }
 
-/** 使用流程：三個步驟橫向排列，以大號數字與細線區隔 */
+/** 使用流程：四個步驟（平板 2 欄、桌機 4 欄），以大號數字與細線區隔 */
 function HowItWorks() {
   return (
     <section id="how-it-works" className="scroll-mt-16 bg-surface py-24">
       <div className={`${container} flex flex-col gap-14`}>
-        <SectionHeading label="使用流程" title="三個步驟，完成一場模擬面試" />
-        <ol className="grid gap-10 md:grid-cols-3">
+        <SectionHeading label="使用流程" title="四個步驟，完成一場模擬面試" />
+        <ol className="grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
           {STEPS.map((step, i) => (
             <li key={step.title} className="flex flex-col gap-4 border-t border-line pt-6">
               <span className="text-4xl font-extralight tabular-nums text-wood">

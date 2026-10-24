@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { KeyPrivacyNote } from "@/components/key-privacy-note";
 import {
   DEFAULT_QUESTION_COUNT,
   QUESTION_COUNT_OPTIONS,
@@ -10,7 +12,9 @@ import {
   type QuestionCount,
 } from "@/lib/interview";
 import { ScoreBar } from "@/components/score-bar";
+import { LLM_HEADERS, maskKey, PROVIDERS, type LlmSettings } from "@/lib/providers";
 import { container, eyebrow, primaryButton, secondaryButton, textArea } from "@/lib/styles";
+import { useLlmSettings } from "@/lib/use-llm-settings";
 
 /**
  * 面試流程的三個階段：
@@ -26,8 +30,13 @@ type Stage = "setup" | "interview" | "result";
  * 後端 API 不保存任何狀態，所以整場面試的對話紀錄（history）都存在這個元件中，
  * 每次呼叫 /api/interview 時連同職缺描述一起送出，由後端依已回答題數決定
  * 要出下一題還是產生評分結論。
+ *
+ * BYOK：使用者的 API 金鑰設定從 localStorage 讀取（useLlmSettings），
+ * 呼叫 API 時放在 HTTP 標頭中帶上；尚未設定時引導使用者前往設定頁。
  */
 export function InterviewApp() {
+  // ready：是否已讀完 localStorage；llm：已儲存的金鑰設定，沒有則為 null
+  const { ready, settings: llm } = useLlmSettings();
   const [stage, setStage] = useState<Stage>("setup");
   const [jobDescription, setJobDescription] = useState("");
   // 使用者選擇的題數；面試開始後鎖定，直到按「重新開始」才能更改
@@ -56,12 +65,23 @@ export function InterviewApp() {
    * 回傳是否成功，讓呼叫端可以在失敗時還原狀態。
    */
   async function callInterview(nextHistory: ChatTurn[]) {
+    // 面試途中在其他分頁清除了金鑰時，llm 會變成 null
+    if (!llm) {
+      setError("找不到 API 金鑰設定，請先到「設定」頁填入金鑰。");
+      return false;
+    }
     setLoading(true);
     setError("");
     try {
       const res = await fetch("/api/interview", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        // 金鑰放在標頭中送出；伺服器只用它轉呼叫 AI 服務，不會儲存
+        headers: {
+          "Content-Type": "application/json",
+          [LLM_HEADERS.provider]: llm.provider,
+          [LLM_HEADERS.apiKey]: llm.apiKey,
+          [LLM_HEADERS.model]: llm.model,
+        },
         body: JSON.stringify({ jobDescription, totalQuestions, history: nextHistory }),
       });
       const data: InterviewResponse = await res.json();
@@ -129,8 +149,12 @@ export function InterviewApp() {
           </p>
         </header>
 
-        {stage === "setup" ? (
+        {stage === "setup" && !ready ? null : stage === "setup" && !llm ? (
+          // 尚未設定 API 金鑰：不顯示表單，引導前往設定頁
+          <NeedKey />
+        ) : stage === "setup" ? (
           <form onSubmit={handleStart} className="flex flex-col gap-4">
+            {llm && <KeyStatus settings={llm} />}
             <label htmlFor="jd" className={eyebrow}>
               職缺描述
             </label>
@@ -244,12 +268,51 @@ export function InterviewApp() {
         )}
 
         {error && (
-          <div className="rounded-2xl border border-[#d9b8a8] bg-[#f6ebe5] px-5 py-3 text-sm text-[#8a4b35] dark:border-[#5a3a2e] dark:bg-[#2e2420] dark:text-[#e0b3a0]">
-            {error}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#d9b8a8] bg-[#f6ebe5] px-5 py-3 text-sm text-[#8a4b35] dark:border-[#5a3a2e] dark:bg-[#2e2420] dark:text-[#e0b3a0]">
+            <span>{error}</span>
+            {/* 多數錯誤（金鑰無效、模型無權限、額度不足）都需要到設定頁處理 */}
+            <Link href="/settings" className="shrink-0 underline underline-offset-4">
+              前往設定
+            </Link>
           </div>
         )}
+
+        {/* 金鑰隱私說明：只要已設定金鑰就顯示在頁面底部 */}
+        {llm && <KeyPrivacyNote compact />}
         <div ref={bottomRef} />
       </div>
+    </div>
+  );
+}
+
+/** 尚未設定 API 金鑰時顯示的引導卡片 */
+function NeedKey() {
+  return (
+    <div className="flex flex-col items-start gap-4 rounded-3xl border border-line bg-surface p-7">
+      <span className={eyebrow}>開始之前</span>
+      <h2 className="text-xl font-light text-ink">請先設定你的 API 金鑰</h2>
+      <p className="text-sm leading-relaxed text-muted">
+        Lagom 使用你自己的 Anthropic 或 OpenAI API 金鑰進行面試（BYOK）。
+        金鑰只會存在你的瀏覽器中，我們的伺服器不會儲存。
+      </p>
+      <Link href="/settings" className={primaryButton}>
+        前往設定 →
+      </Link>
+    </div>
+  );
+}
+
+/** 顯示目前使用的供應商、模型與遮蔽後的金鑰，並提供變更連結 */
+function KeyStatus({ settings }: { settings: LlmSettings }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-line bg-surface px-4 py-3 text-xs text-muted">
+      <span>
+        使用 <span className="text-ink">{PROVIDERS[settings.provider].label}</span> ·{" "}
+        {settings.model} · <span className="font-mono">{maskKey(settings.apiKey)}</span>
+      </span>
+      <Link href="/settings" className="text-accent underline-offset-4 hover:underline">
+        變更設定
+      </Link>
     </div>
   );
 }

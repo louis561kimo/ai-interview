@@ -1,13 +1,16 @@
 /**
- * POST /api/interview — AI 模擬面試的後端 API。
+ * POST /api/interview — AI 模擬面試的後端 API（BYOK 模式）。
+ *
+ * BYOK：使用者在「設定」頁填入自己的 Anthropic 或 OpenAI API 金鑰，金鑰存在瀏覽器，
+ * 每次呼叫時以 HTTP 標頭（見 LLM_HEADERS）帶上。伺服器只用這把金鑰轉呼叫 AI 供應商，
+ * 不儲存、不記錄，也不使用任何伺服器端環境變數中的金鑰。
  *
  * 設計：此 API 為「無狀態」，伺服器不儲存任何面試紀錄。
- * 前端每次呼叫都會帶上職缺描述、使用者選擇的題數（totalQuestions）與目前為止的完整對話紀錄，
+ * 前端每次呼叫都會帶上職缺描述、題數（totalQuestions）與目前為止的完整對話紀錄，
  * 後端依「已回答的題數」決定這一輪要做什麼：
- *   - 已答 0 ~ totalQuestions-1 題 → 請 Claude 出下一題（可追問上一題）
- *   - 已答 totalQuestions 題       → 請 Claude 產生評分、評論與逐題檢討
+ *   - 已答 0 ~ totalQuestions-1 題 → 請模型出下一題（可追問上一題）
+ *   - 已答 totalQuestions 題       → 請模型產生評分、評論與逐題檢討
  */
-import Anthropic from "@anthropic-ai/sdk";
 import {
   DEFAULT_QUESTION_COUNT,
   isQuestionCount,
@@ -15,12 +18,15 @@ import {
   type Evaluation,
   type InterviewResponse,
 } from "@/lib/interview";
+import { generate, LlmError, type LlmMessage } from "@/lib/llm";
+import {
+  checkKeyFormat,
+  isAllowedModel,
+  isProvider,
+  LLM_HEADERS,
+  PROVIDERS,
+} from "@/lib/providers";
 
-// SDK 會自動讀取環境變數 ANTHROPIC_API_KEY（Next.js 會從 .env.local 載入）。
-// 放在模組層級，讓同一個伺服器程序內的請求共用連線。
-const client = new Anthropic();
-
-const MODEL = "claude-opus-5-5";
 // 輸入長度上限：避免過長的內容造成費用暴增或濫用
 const MAX_JD_LENGTH = 8000;
 const MAX_ANSWER_LENGTH = 4000;
@@ -40,8 +46,9 @@ function systemPrompt(total: number) {
 
 /**
  * 評分結論的 JSON Schema，逐題檢討的筆數依 total 而定。
- * 透過 Structured Outputs（output_config.format）強制 Claude 依此格式輸出，
+ * 透過兩家供應商的 Structured Outputs 強制模型依此格式輸出，
  * 確保回傳內容一定能被 JSON.parse 並符合前端的 Evaluation 型別。
+ * 所有欄位皆 required 且 additionalProperties: false，符合 OpenAI strict 模式的要求。
  */
 const evaluationSchema = (total: number) => ({
   type: "object",
@@ -89,6 +96,26 @@ function jsonResponse(body: InterviewResponse, status = 200) {
 }
 
 /**
+ * 從請求標頭讀取使用者的 BYOK 設定並驗證。
+ * 回傳設定物件，或一則可直接顯示給使用者的錯誤訊息字串。
+ */
+function readLlmSettings(headers: Headers) {
+  const provider = headers.get(LLM_HEADERS.provider);
+  const apiKey = headers.get(LLM_HEADERS.apiKey)?.trim() ?? "";
+  const model = headers.get(LLM_HEADERS.model);
+
+  if (!isProvider(provider) || !apiKey) {
+    return "尚未設定 API 金鑰，請先到「設定」頁填入你的 Anthropic 或 OpenAI 金鑰。";
+  }
+  const keyError = checkKeyFormat(provider, apiKey);
+  if (keyError) return `${keyError}，請到「設定」頁確認。`;
+  if (!isAllowedModel(provider, model)) {
+    return `不支援的模型，${PROVIDERS[provider].label} 可用的模型為：${PROVIDERS[provider].models.join("、")}`;
+  }
+  return { provider, apiKey, model };
+}
+
+/**
  * 驗證前端送來的對話紀錄。
  * 規則：必須是陣列，且依序為「面試官、候選人、面試官、候選人…」交錯，
  * 每則內容為非空字串且不超過長度上限。任何一項不符就回傳 null。
@@ -115,81 +142,44 @@ function parseHistory(value: unknown): ChatTurn[] | null {
 }
 
 /**
- * 把職缺描述與對話紀錄轉成 Claude Messages API 需要的 messages 陣列。
+ * 把職缺描述與對話紀錄轉成模型需要的 messages 陣列（兩家供應商通用的格式）。
  *
- * - 第一則固定是 user 訊息，內容為職缺描述（API 規定第一則必須是 user）
+ * - 第一則固定是 user 訊息，內容為職缺描述（對話必須以 user 開頭）
  * - 面試官的發言對應 assistant，候選人的回答對應 user
  * - instruction 是這一輪的任務指示（出第幾題 / 產生評分），
- *   附加在最後一則 user 訊息的尾端，讓 Claude 清楚知道現在要做什麼
+ *   附加在最後一則 user 訊息的尾端，讓模型清楚知道現在要做什麼
  */
 function buildMessages(
   jobDescription: string,
   history: ChatTurn[],
   instruction: string,
-): Anthropic.Beta.BetaMessageParam[] {
-  const messages: Anthropic.Beta.BetaMessageParam[] = [
+): LlmMessage[] {
+  const messages: LlmMessage[] = [
     {
       role: "user",
       content: `<job_description>\n${jobDescription}\n</job_description>\n\n請開始面試。`,
     },
     ...history.map(
-      (turn): Anthropic.Beta.BetaMessageParam => ({
+      (turn): LlmMessage => ({
         role: turn.role === "interviewer" ? "assistant" : "user",
         content: turn.content,
       }),
     ),
   ];
-  // history 長度一定是偶數（成對），所以最後一則必定是 user 訊息（字串內容）
+  // history 長度一定是偶數（成對），所以最後一則必定是 user 訊息
   const last = messages[messages.length - 1];
-  last.content = [
-    { type: "text", text: last.content as string },
-    { type: "text", text: `（面試系統指示：${instruction}）` },
-  ];
+  last.content += `\n\n（面試系統指示：${instruction}）`;
   return messages;
 }
 
-/**
- * 呼叫 Claude 並取回純文字結果。
- *
- * @param total  本場面試的題數，用於產生 system prompt
- * @param format 若提供 JSON Schema，Claude 會輸出符合該格式的 JSON 字串（用於評分）；
- *               不提供則輸出一般文字（用於出題）。
- *
- * fallbacks: "default" 為伺服器端備援：若主模型因安全分類器拒答，
- * API 會自動改由 Anthropic 建議的備援模型接手，這需要搭配對應的 beta 標頭。
- */
-async function askClaude(
-  messages: Anthropic.Beta.BetaMessageParam[],
-  total: number,
-  format?: Anthropic.Beta.BetaJSONOutputFormat,
-) {
-  const response = await client.beta.messages.create({
-    model: MODEL,
-    max_tokens: 16000,
-    betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: "default",
-    system: systemPrompt(total),
-    // effort 控制思考深度與花費；medium 在出題品質與回應速度間取得平衡
-    output_config: { effort: "medium", ...(format && { format }) },
-    messages,
-  });
-
-  // 連備援模型都拒答時，stop_reason 會是 refusal，此時不應讀取 content
-  if (response.stop_reason === "refusal") {
-    throw new Error("模型拒絕回應此請求，請調整職缺描述或回答內容後再試。");
-  }
-  // 回應可能包含 thinking 等其他區塊，只取出 text 區塊並串接
-  const text = response.content
-    .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("")
-    .trim();
-  if (!text) throw new Error("模型沒有回傳內容，請再試一次。");
-  return text;
-}
-
 export async function POST(request: Request) {
-  // ── 1. 解析並驗證請求內容 ──
+  // ── 1. 讀取使用者的 API 金鑰設定（BYOK）──
+  const llm = readLlmSettings(request.headers);
+  if (typeof llm === "string") {
+    return jsonResponse({ type: "error", error: llm }, 400);
+  }
+
+  // ── 2. 解析並驗證請求內容 ──
   let body: Record<string, unknown>;
   try {
     body = await request.json();
@@ -225,27 +215,29 @@ export async function POST(request: Request) {
   const answered = history.length / 2;
 
   try {
-    // ── 2a. 還沒答滿：出下一題 ──
+    // ── 3a. 還沒答滿：出下一題 ──
     if (answered < total) {
       const questionNumber = answered + 1;
       const instruction =
         questionNumber === 1
           ? `請提出第 1 題（共 ${total} 題）。`
           : `請提出第 ${questionNumber} 題（共 ${total} 題）：可針對上一題回答追問，或換新面向出題。`;
-      const question = await askClaude(
-        buildMessages(jobDescription, history, instruction),
-        total,
-      );
+      const question = await generate({
+        ...llm,
+        system: systemPrompt(total),
+        messages: buildMessages(jobDescription, history, instruction),
+      });
       return jsonResponse({ type: "question", questionNumber, question });
     }
 
-    // ── 2b. 已答滿：產生評分結論（以 JSON Schema 約束輸出格式）──
+    // ── 3b. 已答滿：產生評分結論（以 JSON Schema 約束輸出格式）──
     const instruction = `${total} 題已全部結束，不要再出題。請根據候選人所有回答，評估其與此職缺的契合度：給出 1-10 的整數分數（10 分最佳）；整體評論（著重回答內容與職缺要求的契合程度，扼要總結優勢與不足）；依題目順序對每一題分別給出檢討與建議（共 ${total} 筆，內容針對該題回答，不要與整體評論重複）；最後給 2-4 條整體建議。`;
-    const raw = await askClaude(
-      buildMessages(jobDescription, history, instruction),
-      total,
-      { type: "json_schema", schema: evaluationSchema(total) },
-    );
+    const raw = await generate({
+      ...llm,
+      system: systemPrompt(total),
+      messages: buildMessages(jobDescription, history, instruction),
+      jsonSchema: { name: "interview_evaluation", schema: evaluationSchema(total) },
+    });
     const parsed = JSON.parse(raw) as Evaluation;
     // 保險起見再做一次整理：分數夾在 1–10 的整數，逐題檢討不超過題數
     const evaluation: Evaluation = {
@@ -256,21 +248,12 @@ export async function POST(request: Request) {
     };
     return jsonResponse({ type: "result", evaluation });
   } catch (error) {
-    // ── 3. 錯誤處理：完整錯誤寫入伺服器 log，回給前端的是易懂的中文訊息 ──
-    console.error("[interview]", error);
-    let message = "伺服器發生錯誤，請稍後再試。";
-    // 依 SDK 的錯誤類別由具體到一般判斷
-    if (error instanceof Anthropic.AuthenticationError) {
-      message = "API 金鑰無效，請檢查 .env.local 的 ANTHROPIC_API_KEY。";
-    } else if (error instanceof Anthropic.RateLimitError) {
-      message = "請求太頻繁，請稍後再試。";
-    } else if (error instanceof Anthropic.APIError) {
-      message = `Claude API 錯誤（${error.status ?? "連線失敗"}），請稍後再試。`;
-    } else if (error instanceof Error && !(error instanceof SyntaxError)) {
-      // 自行拋出的錯誤（拒答、無內容）訊息已是中文，直接顯示；
-      // SyntaxError 來自 JSON.parse，屬內部問題，使用通用訊息
-      message = error.message;
+    // ── 4. 錯誤處理：LlmError 已是中文訊息；其他（如 JSON.parse 失敗）使用通用訊息 ──
+    // 注意：不要在這裡 console.error(error) 整個物件或請求標頭，以免金鑰寫進 log
+    if (error instanceof LlmError) {
+      return jsonResponse({ type: "error", error: error.message }, error.status);
     }
-    return jsonResponse({ type: "error", error: message }, 500);
+    console.error("[interview]", error instanceof Error ? error.name : "UnknownError");
+    return jsonResponse({ type: "error", error: "伺服器發生錯誤，請稍後再試。" }, 500);
   }
 }

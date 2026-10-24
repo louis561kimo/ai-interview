@@ -7,6 +7,7 @@ const NAV_LINKS = [
   { href: "/#features", label: "功能" },
   { href: "/#how-it-works", label: "使用流程" },
   { href: "/#faq", label: "常見問題" },
+  { href: "/settings", label: "設定" },
 ];
 
 /**

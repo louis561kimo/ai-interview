@@ -32,6 +32,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="zh-Hant"
+      // 搭配 globals.css 的平滑捲動；讓 Next.js 在換頁時暫停平滑捲動，直接跳到新頁面頂端
+      data-scroll-behavior="smooth"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="flex min-h-full flex-col">
