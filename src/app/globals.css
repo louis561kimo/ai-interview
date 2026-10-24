@@ -1,26 +1,65 @@
 @import "tailwindcss";
 
+/*
+ * 北歐風設計 token：亞麻底、炭灰字、鼠尾草綠與淺木色點綴。
+ * 先以 CSS 變數定義淺色模式，再於下方覆寫深色模式，
+ * 最後透過 @theme 註冊成 Tailwind 顏色（如 bg-canvas、text-ink、border-line）。
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --canvas: #f4f1ec; /* 頁面底色（亞麻） */
+  --surface: #fbfaf7; /* 卡片、輸入框等表面 */
+  --ink: #2e2d2b; /* 主要文字（炭灰） */
+  --muted: #8a857d; /* 次要文字 */
+  --line: #e3ded5; /* 邊框與分隔線 */
+  --accent: #6f8471; /* 主色（鼠尾草綠） */
+  --accent-soft: #e6ebe3; /* 主色淡底，用於回答區塊、圖示底色 */
+  --wood: #c4a882; /* 點綴色（淺木） */
+  --on-accent: #fbfaf7; /* 主色上的文字 */
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
+/* 深色模式：跟隨作業系統設定，維持同樣的色彩關係但降低明度 */
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --canvas: #1e1d1b;
+    --surface: #272624;
+    --ink: #ece8e1;
+    --muted: #9a958c;
+    --line: #3a3835;
+    --accent: #9fb39c;
+    --accent-soft: #2f362e;
+    --wood: #b39670;
+    --on-accent: #1e1d1b;
   }
 }
 
+/* 把上面的 CSS 變數註冊為 Tailwind 主題色與字型 */
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-wood: var(--wood);
+  --color-on-accent: var(--on-accent);
+  /* Geist 只含拉丁字母，中文會落到系統的蘋方或 Noto Sans TC */
+  --font-sans: var(--font-geist-sans), "PingFang TC", "Noto Sans TC", sans-serif;
+  --font-mono: var(--font-geist-mono);
+}
+
+/* 點擊 header 的錨點連結時平滑捲動 */
+html {
+  scroll-behavior: smooth;
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-sans);
+}
+
+/* 選取文字時使用主色淡底，取代瀏覽器預設的藍色 */
+::selection {
+  background: var(--accent-soft);
 }
