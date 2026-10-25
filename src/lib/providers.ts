@@ -7,15 +7,15 @@ export const PROVIDERS = {
     keyPrefix: "sk-ant-",
     keyPlaceholder: "sk-ant-...",
     keyUrl: "https://console.anthropic.com/settings/keys",
-    // 第一個為預設模型；只開放清單內的模型，避免使用者選到不支援所需參數的舊模型
-    models: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+    // 第一個為預設模型（Haiku 最便宜，其餘依價格由低到高）；只開放清單內的模型，避免使用者選到不支援所需參數的舊模型
+    models: ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"],
   },
   openai: {
     label: "OpenAI",
     keyPrefix: "sk-",
     keyPlaceholder: "sk-...",
     keyUrl: "https://platform.openai.com/api-keys",
-    models: ["gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
+    models: ["gpt-5.4-mini", "gpt-5.4", "gpt-5.5"],
   },
 } as const;
 
